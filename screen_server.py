@@ -18,8 +18,6 @@ JPEG_QUALITY = 50
 TARGET_FPS = 15
 
 # เปิด logging ไว้ เพื่อให้เห็น error ภายในของไลบรารี websockets เอง
-# (ปกติ websockets จะ log ผ่าน logging module ไม่ใช่ print ตรงๆ
-#  ถ้าไม่เปิดตรงนี้ error บางอย่างจะเงียบหายไปเลยไม่ขึ้น terminal)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -28,8 +26,6 @@ logging.basicConfig(
 mouse = Controller()
 
 async def handle_client(websocket):
-    # ดึง path ให้รองรับ websockets ได้ทุกเวอร์ชัน (เวอร์ชันใหม่ใช้ .request.path,
-    # เวอร์ชันเก่าใช้ .path) ป้องกันไม่ให้ AttributeError ทำให้ตัดการเชื่อมต่อแบบเงียบๆ
     path = getattr(websocket, "path", None)
     if path is None:
         request = getattr(websocket, "request", None)
@@ -54,8 +50,12 @@ async def handle_client(websocket):
 
     prev_gray = None
 
-    # ฟังก์ชันรับคำสั่ง Touch จาก CYD เพื่อคุมเมาส์
+    # ฟังก์ชันรับคำสั่ง Touch จาก CYD เพื่อคุมเมาส์และรองรับ Touch Swipe Scroll
     async def receive_touch():
+        touch_start_y = None
+        last_y = None
+        is_drag_scrolling = False
+
         try:
             async for message in websocket:
                 if isinstance(message, str) and message.startswith("M:"):
@@ -68,12 +68,39 @@ async def handle_client(websocket):
                         map_x = int((tx / CYD_W) * pi_screen_w)
                         map_y = int((ty / CYD_H) * pi_screen_h)
 
-                        mouse.position = (map_x, map_y)
+                        if state == 1:  # Touch Down / Drag
+                            if touch_start_y is None:
+                                touch_start_y = ty
+                                last_y = ty
+                                is_drag_scrolling = False
+                                mouse.position = (map_x, map_y)
+                            else:
+                                dy = ty - last_y
+                                total_dy = ty - touch_start_y
 
-                        if state == 1:
-                            mouse.press(Button.left)
-                        else:
-                            mouse.release(Button.left)
+                                # ถ้ารูดนิ้วเกิน 8 pixels -> ให้กลายเป็นการ Scroll เลื่อนดูข้อความ Terminal
+                                if abs(total_dy) >= 8 or is_drag_scrolling:
+                                    is_drag_scrolling = True
+                                    if abs(dy) >= 6:
+                                        # dy > 0 (ลากนิ้วลง) = Scroll Up (ดูข้อความด้านบน)
+                                        # dy < 0 (ลากนิ้วขึ้น) = Scroll Down (ดูข้อความด้านล่าง)
+                                        scroll_amount = 1 if dy > 0 else -1
+                                        mouse.scroll(0, scroll_amount * 2)
+                                        last_y = ty
+                                else:
+                                    mouse.position = (map_x, map_y)
+
+                        else:  # Touch Up (ปล่อยนิ้ว)
+                            if not is_drag_scrolling:
+                                # ถ้าไม่ได้ลากรูดยาวๆ ให้เป็นการคลิกเมาส์ซ้ายปกติ
+                                mouse.position = (map_x, map_y)
+                                mouse.press(Button.left)
+                                mouse.release(Button.left)
+
+                            touch_start_y = None
+                            last_y = None
+                            is_drag_scrolling = False
+
                     except Exception:
                         print(f"[!] Failed to handle touch message {message!r}:")
                         traceback.print_exc()
@@ -92,10 +119,6 @@ async def handle_client(websocket):
         try:
             while True:
                 # 1. แคปจอ
-                # หมายเหตุ: บน Xvfb (จอเสมือน) การใช้ mss object เดิมซ้ำๆ กัน grab()
-                # หลายรอบ บางทีจะค้างอ่านภาพเก่าจากบัฟเฟอร์เดิมตลอด ไม่รีเฟรชภาพจริง
-                # (บั๊กที่รู้จักกันดีของ mss + Xvfb) จึงต้องสร้าง mss instance ใหม่ทุกรอบ
-                # เพื่อบังคับให้ดึงภาพสดจริงๆ ทุกครั้ง
                 with mss.MSS() as fresh_sct:
                     sct_img = fresh_sct.grab(monitor)
                 frame = np.array(sct_img)
@@ -128,8 +151,6 @@ async def handle_client(websocket):
                     ret, jpeg = cv2.imencode('.jpg', crop_bgr, encode_param)
                     
                     if ret:
-                        # แพ็กข้อมูลพิกัด X (2 Byte) และ Y (2 Byte) ไว้หน้าไฟล์ JPEG
-                        # ใช้ format '>HH' (Big-endian unsigned short)
                         header = struct.pack('>HH', x, y)
                         payload = header + jpeg.tobytes()
                         await websocket.send(payload)

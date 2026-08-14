@@ -78,7 +78,7 @@ export PS1="\[\033[1;33m\]CYD-\[\033[1;36m\]${UPPER_USER}\[\033[1;32m\] >\[\033[
 clear
 EOF
 
-echo "[*] Starting xterm in virtual display (with CYD-UPPERCASE prompt & auto-respawn)..."
+echo "[*] Starting xterm in virtual display (with scrollback buffer & touch scroll support)..."
 (
     while true; do
         DISPLAY=$VDISPLAY xterm \
@@ -92,6 +92,11 @@ echo "[*] Starting xterm in virtual display (with CYD-UPPERCASE prompt & auto-re
             -b 0 \
             -bw 0 \
             +sb \
+            -sl 5000 \
+            -xrm 'XTerm*saveLines: 5000' \
+            -xrm 'XTerm*scrollKey: true' \
+            -xrm 'XTerm*scrollTtyOutput: false' \
+            -xrm 'XTerm*VT100.translations: #override <Btn4Down>: scroll-back(2,line) \n <Btn5Down>: scroll-forw(2,line)' \
             -xrm 'XTerm*allowSendEvents: true' \
             -e /bin/bash --rcfile "$CYD_BASHRC" 2>/dev/null || true
         echo "[*] xterm exited. Respawning in 1s..."
