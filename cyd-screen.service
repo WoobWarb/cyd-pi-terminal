@@ -1,0 +1,15 @@
+[Unit]
+Description=CYD Screen Mirror (Xvfb + xterm + screen_server.py)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deathwolf
+WorkingDirectory=/home/deathwolf/cyd-screen
+ExecStart=/home/deathwolf/cyd-screen/start_cyd_terminal.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
