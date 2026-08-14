@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import sys
+import time
 import traceback
 import websockets
 import mss
@@ -7,6 +9,9 @@ import cv2
 import numpy as np
 import struct
 from pynput.mouse import Controller, Button
+import Xlib.display
+import Xlib.X
+import Xlib.ext.xtest
 
 # ==========================================
 # CONFIGURATION
@@ -23,6 +28,33 @@ logging.basicConfig(
 )
 
 mouse = Controller()
+
+# X11 display for synthetic keyboard scroll events (Shift + PageUp / Shift + PageDown)
+x11_display = None
+def get_x11_display():
+    global x11_display
+    if x11_display is None:
+        try:
+            x11_display = Xlib.display.Display(":1")
+        except Exception:
+            pass
+    return x11_display
+
+def scroll_terminal_page(scroll_up=True):
+    """ส่งคำสั่ง Shift+PageUp หรือ Shift+PageDown เลื่อนหน้าจอ Terminal ทันที"""
+    d = get_x11_display()
+    if d is None:
+        return
+    try:
+        # Keycodes: Shift_L = 50, Page_Up = 112, Page_Down = 117
+        page_key = 112 if scroll_up else 117
+        Xlib.ext.xtest.fake_input(d, Xlib.X.KeyPress, 50)       # Shift Down
+        Xlib.ext.xtest.fake_input(d, Xlib.X.KeyPress, page_key) # PageUp/Down Down
+        Xlib.ext.xtest.fake_input(d, Xlib.X.KeyRelease, page_key) # PageUp/Down Up
+        Xlib.ext.xtest.fake_input(d, Xlib.X.KeyRelease, 50)     # Shift Up
+        d.sync()
+    except Exception as e:
+        print(f"[!] scroll_terminal_page error: {e}")
 
 async def handle_client(websocket):
     path = getattr(websocket, "path", None)
@@ -84,17 +116,23 @@ async def handle_client(websocket):
                                     dy = ty - last_y
                                     total_dy = ty - touch_start_y
 
-                                    if abs(total_dy) >= 8 or is_drag_scrolling:
+                                    # ถ้ารูดนิ้วในแนวตั้งเกิน 10 pixels -> เป็น Gesture เลื่อนหน้าจอ
+                                    if abs(total_dy) >= 10 or is_drag_scrolling:
                                         is_drag_scrolling = True
-                                        if abs(dy) >= 6:
-                                            scroll_amount = 1 if dy > 0 else -1
-                                            mouse.scroll(0, scroll_amount * 2)
+                                        if abs(dy) >= 8:
+                                            # dy > 0 (ลากนิ้วลง) = Scroll Up (ดูข้อความด้านบน)
+                                            # dy < 0 (ลากนิ้วขึ้น) = Scroll Down (ดูข้อความด้านล่าง)
+                                            scroll_up = (dy > 0)
+                                            scroll_terminal_page(scroll_up=scroll_up)
+                                            mouse.scroll(0, 2 if scroll_up else -2)
+                                            print(f"[*] Touch Gesture: Scroll {'UP (Shift+PgUp)' if scroll_up else 'DOWN (Shift+PgDn)'} (dy={dy})")
                                             last_y = ty
                                     else:
                                         mouse.position = (map_x, map_y)
 
-                            else:  # Touch Up
+                            else:  # Touch Up (ปล่อยนิ้ว)
                                 if not is_drag_scrolling:
+                                    # แตะเฉยๆ ให้เป็นการคลิกเมาส์
                                     mouse.position = (map_x, map_y)
                                     mouse.press(Button.left)
                                     mouse.release(Button.left)
@@ -118,7 +156,7 @@ async def handle_client(websocket):
     # ฟังก์ชันส่งภาพหน้าจอ (Delta Update + Force Full Frame on Connect)
     async def send_screen():
         nonlocal prev_gray, force_refresh
-        initial_full_frames = 3  # ส่ง Full frame 3 เฟรมแรกเมื่อต่อใหม่เสมอ เพื่อให้แน่ใจว่าจอ CYD ได้ภาพครบ
+        initial_full_frames = 3
 
         try:
             while True:
@@ -132,14 +170,12 @@ async def handle_client(websocket):
                 x, y, w, h = 0, 0, CYD_W, CYD_H
                 
                 if initial_full_frames > 0 or force_refresh or prev_gray is None:
-                    # ส่งภาพเต็มจอ
                     w, h = CYD_W, CYD_H
                     x, y = 0, 0
                     if initial_full_frames > 0:
                         initial_full_frames -= 1
                     force_refresh = False
                 else:
-                    # ตรวจหาเฉพาะจุดที่ภาพมีการเปลี่ยนแปลง (Image Diff)
                     diff = cv2.absdiff(prev_gray, gray)
                     _, thresh = cv2.threshold(diff, 10, 255, cv2.THRESH_BINARY)
                     
