@@ -79,6 +79,11 @@ void setup() {
     tft.setRotation(1);
     tft.fillScreen(TFT_BLACK);
     
+    // Touch Calibration Data for CYD (ESP32-2432S028) Landscape Rotation 1
+    // Required by TFT_eSPI to enable tft.getTouch()
+    uint16_t calData[5] = { 275, 3620, 264, 3532, 1 };
+    tft.setTouch(calData);
+
     // Configure TJpg_Decoder
     TJpgDec.setCallback(jpegOutput);
     TJpgDec.setJpgScale(1);
@@ -110,12 +115,12 @@ void setup() {
 void loop() {
     webSocket.loop();
 
-    // Touch Screen Polling (Rate limited to 50ms)
-    if (millis() - lastTouchTime > 50) {
+    // Touch Screen Polling (Rate limited to 40ms)
+    if (millis() - lastTouchTime > 40) {
         lastTouchTime = millis();
         
         uint16_t tx = 0, ty = 0;
-        bool pressed = tft.getTouch(&tx, &ty);
+        bool pressed = tft.getTouch(&tx, &ty, 400); // 400 pressure threshold
         
         // Report touch coordinate & button state: "M:x,y,state"
         if (pressed != lastTouchState || pressed) {

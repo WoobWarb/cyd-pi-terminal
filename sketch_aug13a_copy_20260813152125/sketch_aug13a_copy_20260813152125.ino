@@ -1,4 +1,4 @@
-    #include <WiFi.h>
+#include <WiFi.h>
 #include <WebSocketsClient.h>
 #include <TFT_eSPI.h>
 #include <TJpg_Decoder.h>
@@ -79,6 +79,11 @@ void setup() {
     tft.setRotation(1);
     tft.fillScreen(TFT_BLACK);
     
+    // ตั้งค่า Touch Calibration สำหรับจอ CYD ในแนวนอน (Rotation 1)
+    // จำเป็นต้องมีเพื่อให้คำสั่ง tft.getTouch() คืนค่า true ได้
+    uint16_t calData[5] = { 275, 3620, 264, 3532, 1 };
+    tft.setTouch(calData);
+
     // ตั้งค่าตัวถอดรหัส JPEG
     TJpgDec.setCallback(jpegOutput);
     TJpgDec.setJpgScale(1);
@@ -109,14 +114,14 @@ void setup() {
 void loop() {
     webSocket.loop();
 
-    // จัดการระบบ Touch Screen
-    if (millis() - lastTouchTime > 50) { // Limit touch polling rate
+    // จัดการระบบ Touch Screen (เช็คทุก 40ms)
+    if (millis() - lastTouchTime > 40) {
         lastTouchTime = millis();
         
         uint16_t tx = 0, ty = 0;
-        bool pressed = tft.getTouch(&tx, &ty);
+        bool pressed = tft.getTouch(&tx, &ty, 400); // 400 pressure threshold
         
-        // ส่งข้อความไปหา Pi เมื่อมีการกด หรือตอนปล่อยนิ้ว (เพื่อให้เมาส์รู้ตัวว่าคลายคลิก)
+        // ส่งข้อความไปหา Pi เมื่อมีการกด หรือตอนปล่อยนิ้ว
         if (pressed != lastTouchState || pressed) {
             char msg[32];
             // Format: M:x,y,state (1 = pressed, 0 = released)
