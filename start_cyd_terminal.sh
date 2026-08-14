@@ -68,16 +68,16 @@ else
 fi
 sleep 1
 
-# สร้างไฟล์ config สำหรับ bash ให้แสดง prompt แบบกระทัดรัด (ย่อชื่อ user/hostname ที่ยาวขวางจอ)
+# สร้างไฟล์ config สำหรับ bash ให้แสดง prompt แบบ CYD-USERName
 CYD_BASHRC="/tmp/cyd_bash.rc"
 cat << 'EOF' > "$CYD_BASHRC"
 [ -f ~/.bashrc ] && source ~/.bashrc
-# ย่อ Prompt ให้เหลือแค่ โฟลเดอร์ปัจจุบัน $ (เช่น "~ $" หรือ "cyd-screen $") ไม่กินพื้นที่จอ 320x240
-export PS1="\[\033[1;32m\]\W\[\033[1;33m\] \$\[\033[0m\] "
+# Format: CYD-userName > (CYD สีเหลืองทอง, userName สีฟ้าคราม, > สีเขียว)
+export PS1="\[\033[1;33m\]CYD-\[\033[1;36m\]\u\[\033[1;32m\] >\[\033[0m\] "
 clear
 EOF
 
-echo "[*] Starting xterm in virtual display (with compact prompt & auto-respawn)..."
+echo "[*] Starting xterm in virtual display (with CYD-USER prompt & auto-respawn)..."
 (
     while true; do
         DISPLAY=$VDISPLAY xterm \
