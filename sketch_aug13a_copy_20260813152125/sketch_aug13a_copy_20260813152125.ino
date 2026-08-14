@@ -2,6 +2,8 @@
 #include <WebSocketsClient.h>
 #include <TFT_eSPI.h>
 #include <TJpg_Decoder.h>
+#include <SPI.h>
+#include <XPT2046_Touchscreen.h>
 
 // =====================================================
 // WIFI & PI CONFIG
@@ -14,18 +16,39 @@ const uint16_t PI_PORT    = 8080;
 const char* WS_PATH       = "/screen";
 
 // =====================================================
-// OBJECTS & CONSTANTS
+// CYD HARDWARE PINOUT (ESP32-2432S028)
+// =====================================================
+#define SCREEN_WIDTH      320
+#define SCREEN_HEIGHT     240
+#define CYD_BACKLIGHT_PIN 21
+
+// Touch Screen XPT2046 Dedicated SPI Pins
+#define XPT2046_IRQ       36
+#define XPT2046_MOSI      32
+#define XPT2046_MISO      39
+#define XPT2046_CLK       25
+#define XPT2046_CS        33
+
+// Touch Calibration Min/Max (CYD Landscape)
+#define TS_MINX           200
+#define TS_MAXX           3800
+#define TS_MINY           200
+#define TS_MAXY           3800
+
+// =====================================================
+// OBJECTS
 // =====================================================
 TFT_eSPI tft = TFT_eSPI();
 WebSocketsClient webSocket;
 
-#define SCREEN_WIDTH  320
-#define SCREEN_HEIGHT 240
-#define CYD_BACKLIGHT_PIN 21
+SPIClass touchSpi = SPIClass(VSPI);
+XPT2046_Touchscreen ts(XPT2046_CS, XPT2046_IRQ);
 
 // Touch state
 bool lastTouchState = false;
 unsigned long lastTouchTime = 0;
+uint16_t lastSentX = 0;
+uint16_t lastSentY = 0;
 
 // =====================================================
 // JPEG CALLBACK
@@ -42,13 +65,13 @@ bool jpegOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) 
 void webSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
     switch (type) {
         case WStype_CONNECTED:
-            Serial.println("Connected to Raspberry Pi!");
+            Serial.println("[WS] Connected to Raspberry Pi!");
             tft.fillScreen(TFT_BLACK);
             webSocket.sendTXT("REFRESH");
             break;
             
         case WStype_DISCONNECTED:
-            Serial.println("Disconnected from Raspberry Pi");
+            Serial.println("[WS] Disconnected from Raspberry Pi");
             break;
 
         case WStype_BIN:
@@ -57,7 +80,6 @@ void webSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
                 uint16_t crop_x = (payload[0] << 8) | payload[1];
                 uint16_t crop_y = (payload[2] << 8) | payload[3];
                 
-                // ส่ง JPEG ไบต์ที่เหลือเข้า Decoder
                 TJpgDec.drawJpg(crop_x, crop_y, payload + 4, length - 4);
             }
             break;
@@ -80,10 +102,11 @@ void setup() {
     tft.init();
     tft.setRotation(1);
     tft.fillScreen(TFT_BLACK);
-    
-    // ตั้งค่า Touch Calibration สำหรับจอ CYD ในแนวนอน (Rotation 1)
-    uint16_t calData[5] = { 275, 3620, 264, 3532, 1 };
-    tft.setTouch(calData);
+
+    // เริ่มต้นระบบ Touch ผ่าน XPT2046 Dedicated SPI Bus
+    touchSpi.begin(XPT2046_CLK, XPT2046_MISO, XPT2046_MOSI, XPT2046_CS);
+    ts.begin(touchSpi);
+    ts.setRotation(1);
 
     // ตั้งค่าตัวถอดรหัส JPEG
     TJpgDec.setCallback(jpegOutput);
@@ -115,20 +138,31 @@ void setup() {
 void loop() {
     webSocket.loop();
 
-    // จัดการระบบ Touch Screen (เช็คทุก 40ms)
-    if (millis() - lastTouchTime > 40) {
+    // จัดการระบบ Touch Screen แบบ Hardware XPT2046 (เช็คทุก 30ms)
+    if (millis() - lastTouchTime > 30) {
         lastTouchTime = millis();
         
-        uint16_t tx = 0, ty = 0;
-        bool pressed = tft.getTouch(&tx, &ty, 400);
-        
-        // ส่งข้อความไปหา Pi เมื่อมีการกด หรือตอนปล่อยนิ้ว
-        if (pressed != lastTouchState || pressed) {
-            char msg[32];
-            sprintf(msg, "M:%d,%d,%d", tx, ty, pressed ? 1 : 0);
-            webSocket.sendTXT(msg);
+        bool pressed = ts.touched();
+        if (pressed) {
+            TS_Point p = ts.getPoint();
             
-            lastTouchState = pressed;
+            // แปลงค่า Raw พิกัดจาก XPT2046 ให้อยู่ในช่วง 0-320 และ 0-240
+            uint16_t tx = constrain(map(p.x, TS_MINX, TS_MAXX, 0, SCREEN_WIDTH), 0, SCREEN_WIDTH);
+            uint16_t ty = constrain(map(p.y, TS_MINY, TS_MAXY, 0, SCREEN_HEIGHT), 0, SCREEN_HEIGHT);
+            
+            lastSentX = tx;
+            lastSentY = ty;
+            
+            char msg[32];
+            sprintf(msg, "M:%d,%d,1", tx, ty);
+            webSocket.sendTXT(msg);
+            lastTouchState = true;
+        } else if (lastTouchState) {
+            // ปล่อยนิ้ว (Release)
+            char msg[32];
+            sprintf(msg, "M:%d,%d,0", lastSentX, lastSentY);
+            webSocket.sendTXT(msg);
+            lastTouchState = false;
         }
     }
 }
