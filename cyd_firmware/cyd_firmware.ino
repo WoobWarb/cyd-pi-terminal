@@ -16,13 +16,13 @@ const uint16_t PI_PORT    = 8080;
 const char* WS_PATH       = "/screen";
 
 // =====================================================
-// CYD HARDWARE PINOUT (ESP32-2432S028)
+// CYD HARDWARE CONFIG (ESP32-2432S028)
 // =====================================================
 #define SCREEN_WIDTH      320
 #define SCREEN_HEIGHT     240
 #define CYD_BACKLIGHT_PIN 21
 
-// Touch Screen XPT2046 Dedicated SPI Pins
+// XPT2046 Dedicated SPI Pins on CYD
 #define XPT2046_MOSI      32
 #define XPT2046_MISO      39
 #define XPT2046_CLK       25
@@ -132,8 +132,8 @@ void setup() {
 void loop() {
     webSocket.loop();
 
-    // Touch Screen Polling (Rate limited to 25ms)
-    if (millis() - lastTouchTime > 25) {
+    // Touch Screen Polling (Rate limited to 30ms)
+    if (millis() - lastTouchTime > 30) {
         lastTouchTime = millis();
         
         if (ts.touched()) {
