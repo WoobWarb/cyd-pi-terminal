@@ -68,7 +68,16 @@ else
 fi
 sleep 1
 
-echo "[*] Starting xterm in virtual display (with auto-respawn)..."
+# สร้างไฟล์ config สำหรับ bash ให้แสดง prompt แบบกระทัดรัด (ย่อชื่อ user/hostname ที่ยาวขวางจอ)
+CYD_BASHRC="/tmp/cyd_bash.rc"
+cat << 'EOF' > "$CYD_BASHRC"
+[ -f ~/.bashrc ] && source ~/.bashrc
+# ย่อ Prompt ให้เหลือแค่ โฟลเดอร์ปัจจุบัน $ (เช่น "~ $" หรือ "cyd-screen $") ไม่กินพื้นที่จอ 320x240
+export PS1="\[\033[1;32m\]\W\[\033[1;33m\] \$\[\033[0m\] "
+clear
+EOF
+
+echo "[*] Starting xterm in virtual display (with compact prompt & auto-respawn)..."
 (
     while true; do
         DISPLAY=$VDISPLAY xterm \
@@ -80,8 +89,10 @@ echo "[*] Starting xterm in virtual display (with auto-respawn)..."
             -cr white \
             -bc \
             -b 0 \
+            -bw 0 \
+            +sb \
             -xrm 'XTerm*allowSendEvents: true' \
-            -e /bin/bash 2>/dev/null || true
+            -e /bin/bash --rcfile "$CYD_BASHRC" 2>/dev/null || true
         echo "[*] xterm exited. Respawning in 1s..."
         sleep 1
     done
