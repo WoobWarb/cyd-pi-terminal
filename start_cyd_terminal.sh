@@ -68,16 +68,17 @@ else
 fi
 sleep 1
 
-# สร้างไฟล์ config สำหรับ bash ให้แสดง prompt แบบ CYD-USERName
+# สร้างไฟล์ config สำหรับ bash ให้แสดง prompt แบบ CYD-USERNAME (ตัวพิมพ์ใหญ่ทั้งหมด)
 CYD_BASHRC="/tmp/cyd_bash.rc"
 cat << 'EOF' > "$CYD_BASHRC"
 [ -f ~/.bashrc ] && source ~/.bashrc
-# Format: CYD-userName > (CYD สีเหลืองทอง, userName สีฟ้าคราม, > สีเขียว)
-export PS1="\[\033[1;33m\]CYD-\[\033[1;36m\]\u\[\033[1;32m\] >\[\033[0m\] "
+# Format: CYD-DEATHWOLF > (ตัวพิมพ์ใหญ่ทั้งหมด)
+UPPER_USER=$(echo "${USER:-DEATHWOLF}" | tr '[:lower:]' '[:upper:]')
+export PS1="\[\033[1;33m\]CYD-\[\033[1;36m\]${UPPER_USER}\[\033[1;32m\] >\[\033[0m\] "
 clear
 EOF
 
-echo "[*] Starting xterm in virtual display (with CYD-USER prompt & auto-respawn)..."
+echo "[*] Starting xterm in virtual display (with CYD-UPPERCASE prompt & auto-respawn)..."
 (
     while true; do
         DISPLAY=$VDISPLAY xterm \
