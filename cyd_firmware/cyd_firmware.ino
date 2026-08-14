@@ -23,17 +23,10 @@ const char* WS_PATH       = "/screen";
 #define CYD_BACKLIGHT_PIN 21
 
 // Touch Screen XPT2046 Dedicated SPI Pins
-#define XPT2046_IRQ       36
 #define XPT2046_MOSI      32
 #define XPT2046_MISO      39
 #define XPT2046_CLK       25
 #define XPT2046_CS        33
-
-// Touch Calibration Min/Max (CYD Landscape)
-#define TS_MINX           200
-#define TS_MAXX           3800
-#define TS_MINY           200
-#define TS_MAXY           3800
 
 // =====================================================
 // OBJECTS & CONSTANTS
@@ -42,7 +35,7 @@ TFT_eSPI tft = TFT_eSPI();
 WebSocketsClient webSocket;
 
 SPIClass touchSpi = SPIClass(VSPI);
-XPT2046_Touchscreen ts(XPT2046_CS, XPT2046_IRQ);
+XPT2046_Touchscreen ts(XPT2046_CS);
 
 // Touch state
 bool lastTouchState = false;
@@ -139,16 +132,15 @@ void setup() {
 void loop() {
     webSocket.loop();
 
-    // Touch Screen Polling (Rate limited to 30ms)
-    if (millis() - lastTouchTime > 30) {
+    // Touch Screen Polling (Rate limited to 25ms)
+    if (millis() - lastTouchTime > 25) {
         lastTouchTime = millis();
         
-        bool pressed = ts.touched();
-        if (pressed) {
+        if (ts.touched()) {
             TS_Point p = ts.getPoint();
             
-            uint16_t tx = constrain(map(p.x, TS_MINX, TS_MAXX, 0, SCREEN_WIDTH), 0, SCREEN_WIDTH);
-            uint16_t ty = constrain(map(p.y, TS_MINY, TS_MAXY, 0, SCREEN_HEIGHT), 0, SCREEN_HEIGHT);
+            uint16_t tx = constrain(map(p.x, 200, 3700, 0, SCREEN_WIDTH), 0, SCREEN_WIDTH);
+            uint16_t ty = constrain(map(p.y, 240, 3800, 0, SCREEN_HEIGHT), 0, SCREEN_HEIGHT);
             
             lastSentX = tx;
             lastSentY = ty;
