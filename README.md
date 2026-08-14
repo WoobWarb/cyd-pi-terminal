@@ -8,6 +8,10 @@
 
 > Turn your **$10 ESP32 "Cheap Yellow Display" (CYD / ESP32-2432S028)** into a wireless, ultra-responsive remote monitor, touch digitizer, and standalone Linux terminal for **Raspberry Pi** and **PC**.
 
+<p align="center">
+  <img src="assets/cyd_terminal_preview.png" alt="CYD Wireless Terminal Preview" width="500" />
+</p>
+
 ---
 
 ## 🌟 Highlights
