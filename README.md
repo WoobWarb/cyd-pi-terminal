@@ -80,7 +80,7 @@ sudo apt install -y xvfb xterm matchbox-window-manager xdotool python3-pip pytho
 
 Clone the repository and set up the Python environment:
 ```bash
-git clone https://github.com/<YOUR_USERNAME>/cyd-pi-terminal.git ~/cyd-screen
+git clone https://github.com/WoobWarb/cyd-pi-terminal.git ~/cyd-screen
 cd ~/cyd-screen
 python3 -m venv venv
 source venv/bin/activate
