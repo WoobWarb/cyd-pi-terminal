@@ -4,14 +4,7 @@ keyboard_forwarder.py
 
 อ่านสัญญาณระดับ Hardware จากคีย์บอร์ดจริงทุกตัวที่เสียบเข้า Pi (ผ่าน evdev)
 แล้วส่งต่อโดยตรงไปยัง X11 XTest extension (Hardware-level event) บน Xvfb :1
-เพื่อให้พิมพ์แล้วตัวอักษร, ปุ่มผสม (Shift, Ctrl+C, Alt), ปุ่มลูกศร และ Numpad ขึ้นใน xterm ทันที
-
-จุดเด่น:
-- ส่งสัญญาณด้วย XTest fake_input (evdev_code + 8) ทำให้ xterm ไม่บล็อกอีเวนต์เหมือน XSendEvent
-- รองรับทุกปุ่ม 100% (A-Z, 0-9, Modifiers, Function keys, Numpad, Symbols, ลูกศร)
-- รองรับหลาย Interface / Wireless Dongle / หลายคีย์บอร์ดพร้อมกัน
-- รองรับ Hotplug: เสียบ-ถอด-เสียบใหม่ ทำงานต่อได้ทันทีโดยไม่ต้องรีสตาร์ท
-- มีระบบ Retry เชื่อมต่อ X Server อัตโนมัติ ป้องกัน Service Crash ตอนบูตเครื่อง
+พร้อมระบบ Auto-Reconnect X11 Display ป้องกัน Broken Pipe เมื่อ Xvfb รีสตาร์ท
 """
 
 import glob
@@ -46,12 +39,35 @@ def connect_x11_display(max_retries=30, retry_delay=1.0):
     return None
 
 
+def send_x11_key(display, keycode, is_press):
+    """ส่ง keycode ไปยัง X11 XTest พร้อมตรวจจับ Broken Pipe และ reconnect อัตโนมัติ"""
+    try:
+        Xlib.ext.xtest.fake_input(display, Xlib.X.KeyPress if is_press else Xlib.X.KeyRelease, keycode)
+        display.sync()
+        return display, True
+    except Exception as e:
+        print(f"[!] X11 error on keycode {keycode} ({e}). Reconnecting to display...")
+        try:
+            display.close()
+        except Exception:
+            pass
+        new_disp = connect_x11_display(max_retries=10, retry_delay=0.5)
+        if new_disp is not None:
+            try:
+                Xlib.ext.xtest.fake_input(new_disp, Xlib.X.KeyPress if is_press else Xlib.X.KeyRelease, keycode)
+                new_disp.sync()
+                return new_disp, True
+            except Exception:
+                pass
+            return new_disp, False
+        return display, False
+
+
 def is_keyboard_device(dev):
     """ตรวจสอบว่าอุปกรณ์นี้เป็นคีย์บอร์ดหรือไม่"""
     try:
         caps = dev.capabilities()
         keys = caps.get(ecodes.EV_KEY, [])
-        # ต้องมีปุ่มตัวอักษรและปุ่มควบคุมพื้นฐาน
         if ecodes.KEY_A in keys and (ecodes.KEY_SPACE in keys or ecodes.KEY_ENTER in keys):
             return True
     except Exception:
@@ -66,7 +82,6 @@ def scan_keyboards(current_devices):
 
     for path in glob.glob("/dev/input/event*"):
         found_paths.add(path)
-        # ถ้าเปิดอยู่แล้วให้คงไว้
         already_open = False
         for fd, dev in current_devices.items():
             if dev.path == path:
@@ -120,7 +135,6 @@ def main():
     try:
         while True:
             now = time.time()
-            # สแกนหาอุปกรณ์ใหม่ทุกๆ 3 วินาที หรือเมื่อยังไม่เจออุปกรณ์ใดๆ เลย
             if now - last_scan_time > 3.0 or not devices:
                 devices = scan_keyboards(devices)
                 last_scan_time = now
@@ -129,7 +143,6 @@ def main():
                     time.sleep(2.0)
                     continue
 
-            # รอ event จากคีย์บอร์ดทุกตัวที่เปิดอยู่
             r, _, _ = select.select(list(devices.keys()), [], [], 2.0)
             if not r:
                 continue
@@ -144,29 +157,19 @@ def main():
                         if event.type != ecodes.EV_KEY:
                             continue
 
-                        # Linux evdev keycode -> X11 keycode: code + 8 (มาตรฐาน Linux Xorg / evdev)
                         x11_keycode = event.code + 8
                         if x11_keycode < 8 or x11_keycode > 255:
                             continue
 
-                        if event.value == 1:  # Key Press (กดลง)
-                            try:
-                                Xlib.ext.xtest.fake_input(display, Xlib.X.KeyPress, x11_keycode)
-                                display.sync()
+                        if event.value == 1:  # Press
+                            display, ok = send_x11_key(display, x11_keycode, True)
+                            if ok:
                                 held_keycodes.add(x11_keycode)
-                            except Exception as e:
-                                print(f"[!] XTest Press error on keycode {x11_keycode}: {e}")
-                        elif event.value == 0:  # Key Release (ปล่อย)
-                            try:
-                                Xlib.ext.xtest.fake_input(display, Xlib.X.KeyRelease, x11_keycode)
-                                display.sync()
-                                held_keycodes.discard(x11_keycode)
-                            except Exception as e:
-                                print(f"[!] XTest Release error on keycode {x11_keycode}: {e}")
-                        # event.value == 2 คือ repeat (X11 จัดการ auto-repeat ให้เองตามมาตรฐาน)
+                        elif event.value == 0:  # Release
+                            display, ok = send_x11_key(display, x11_keycode, False)
+                            held_keycodes.discard(x11_keycode)
 
                 except (OSError, IOError) as e:
-                    # คีย์บอร์ดถูกถอดออกระหว่างทำงาน
                     print(f"[-] Keyboard disconnected: {dev.name} ({dev.path}) [{e}]")
                     try:
                         dev.ungrab()
@@ -181,7 +184,6 @@ def main():
     except KeyboardInterrupt:
         print("\n[*] Stopping Keyboard Forwarder...")
     finally:
-        # ปล่อยปุ่มทั้งหมดที่ยังกดค้างอยู่เพื่อความปลอดภัย
         for kc in list(held_keycodes):
             try:
                 Xlib.ext.xtest.fake_input(display, Xlib.X.KeyRelease, kc)

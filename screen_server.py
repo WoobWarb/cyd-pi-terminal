@@ -17,7 +17,6 @@ CYD_W, CYD_H = 320, 240
 JPEG_QUALITY = 50
 TARGET_FPS = 15
 
-# เปิด logging ไว้ เพื่อให้เห็น error ภายในของไลบรารี websockets เอง
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -49,61 +48,64 @@ async def handle_client(websocket):
     pi_screen_h = monitor['height']
 
     prev_gray = None
+    force_refresh = True
 
     # ฟังก์ชันรับคำสั่ง Touch จาก CYD เพื่อคุมเมาส์และรองรับ Touch Swipe Scroll
     async def receive_touch():
+        nonlocal force_refresh
         touch_start_y = None
         last_y = None
         is_drag_scrolling = False
 
         try:
             async for message in websocket:
-                if isinstance(message, str) and message.startswith("M:"):
-                    try:
-                        # รูปแบบข้อความ: M:x,y,state (เช่น M:150,120,1)
-                        _, data = message.split(":")
-                        tx, ty, state = map(int, data.split(","))
+                if isinstance(message, str):
+                    if message == "REFRESH":
+                        print(f"[*] Full screen refresh requested by client {websocket.remote_address}")
+                        force_refresh = True
+                        continue
 
-                        # แปลงสัดส่วนพิกัดจากจอ CYD (320x240) กลับไปเป็นขนาดจอ Pi ของจริง
-                        map_x = int((tx / CYD_W) * pi_screen_w)
-                        map_y = int((ty / CYD_H) * pi_screen_h)
+                    if message.startswith("M:"):
+                        try:
+                            # รูปแบบข้อความ: M:x,y,state (เช่น M:150,120,1)
+                            _, data = message.split(":")
+                            tx, ty, state = map(int, data.split(","))
 
-                        if state == 1:  # Touch Down / Drag
-                            if touch_start_y is None:
-                                touch_start_y = ty
-                                last_y = ty
-                                is_drag_scrolling = False
-                                mouse.position = (map_x, map_y)
-                            else:
-                                dy = ty - last_y
-                                total_dy = ty - touch_start_y
+                            map_x = int((tx / CYD_W) * pi_screen_w)
+                            map_y = int((ty / CYD_H) * pi_screen_h)
 
-                                # ถ้ารูดนิ้วเกิน 8 pixels -> ให้กลายเป็นการ Scroll เลื่อนดูข้อความ Terminal
-                                if abs(total_dy) >= 8 or is_drag_scrolling:
-                                    is_drag_scrolling = True
-                                    if abs(dy) >= 6:
-                                        # dy > 0 (ลากนิ้วลง) = Scroll Up (ดูข้อความด้านบน)
-                                        # dy < 0 (ลากนิ้วขึ้น) = Scroll Down (ดูข้อความด้านล่าง)
-                                        scroll_amount = 1 if dy > 0 else -1
-                                        mouse.scroll(0, scroll_amount * 2)
-                                        last_y = ty
-                                else:
+                            if state == 1:  # Touch Down / Drag
+                                if touch_start_y is None:
+                                    touch_start_y = ty
+                                    last_y = ty
+                                    is_drag_scrolling = False
                                     mouse.position = (map_x, map_y)
+                                else:
+                                    dy = ty - last_y
+                                    total_dy = ty - touch_start_y
 
-                        else:  # Touch Up (ปล่อยนิ้ว)
-                            if not is_drag_scrolling:
-                                # ถ้าไม่ได้ลากรูดยาวๆ ให้เป็นการคลิกเมาส์ซ้ายปกติ
-                                mouse.position = (map_x, map_y)
-                                mouse.press(Button.left)
-                                mouse.release(Button.left)
+                                    if abs(total_dy) >= 8 or is_drag_scrolling:
+                                        is_drag_scrolling = True
+                                        if abs(dy) >= 6:
+                                            scroll_amount = 1 if dy > 0 else -1
+                                            mouse.scroll(0, scroll_amount * 2)
+                                            last_y = ty
+                                    else:
+                                        mouse.position = (map_x, map_y)
 
-                            touch_start_y = None
-                            last_y = None
-                            is_drag_scrolling = False
+                            else:  # Touch Up
+                                if not is_drag_scrolling:
+                                    mouse.position = (map_x, map_y)
+                                    mouse.press(Button.left)
+                                    mouse.release(Button.left)
 
-                    except Exception:
-                        print(f"[!] Failed to handle touch message {message!r}:")
-                        traceback.print_exc()
+                                touch_start_y = None
+                                last_y = None
+                                is_drag_scrolling = False
+
+                        except Exception:
+                            print(f"[!] Failed to handle touch message {message!r}:")
+                            traceback.print_exc()
                 else:
                     print(f"[?] Unexpected message from device: {message!r}")
         except websockets.exceptions.ConnectionClosed:
@@ -113,40 +115,44 @@ async def handle_client(websocket):
             traceback.print_exc()
             raise
 
-    # ฟังก์ชันส่งภาพหน้าจอ (Delta Update)
+    # ฟังก์ชันส่งภาพหน้าจอ (Delta Update + Force Full Frame on Connect)
     async def send_screen():
-        nonlocal prev_gray
+        nonlocal prev_gray, force_refresh
+        initial_full_frames = 3  # ส่ง Full frame 3 เฟรมแรกเมื่อต่อใหม่เสมอ เพื่อให้แน่ใจว่าจอ CYD ได้ภาพครบ
+
         try:
             while True:
-                # 1. แคปจอ
                 with mss.MSS() as fresh_sct:
                     sct_img = fresh_sct.grab(monitor)
                 frame = np.array(sct_img)
                 
-                # 2. ย่อขนาดให้เท่า CYD
                 frame_resized = cv2.resize(frame, (CYD_W, CYD_H), interpolation=cv2.INTER_NEAREST)
                 gray = cv2.cvtColor(frame_resized, cv2.COLOR_BGRA2GRAY)
                 
                 x, y, w, h = 0, 0, CYD_W, CYD_H
                 
-                # 3. ตรวจหาเฉพาะจุดที่ภาพมีการเปลี่ยนแปลง (Image Diff)
-                if prev_gray is not None:
+                if initial_full_frames > 0 or force_refresh or prev_gray is None:
+                    # ส่งภาพเต็มจอ
+                    w, h = CYD_W, CYD_H
+                    x, y = 0, 0
+                    if initial_full_frames > 0:
+                        initial_full_frames -= 1
+                    force_refresh = False
+                else:
+                    # ตรวจหาเฉพาะจุดที่ภาพมีการเปลี่ยนแปลง (Image Diff)
                     diff = cv2.absdiff(prev_gray, gray)
                     _, thresh = cv2.threshold(diff, 10, 255, cv2.THRESH_BINARY)
                     
-                    # หากรอบครอบจุดที่เปลี่ยน
                     coords = cv2.findNonZero(thresh)
                     if coords is not None:
                         x, y, w, h = cv2.boundingRect(coords)
                     else:
-                        w, h = 0, 0 # ภาพไม่มีอะไรเปลี่ยนเลย ไม่ต้องส่ง
+                        w, h = 0, 0
                 
-                # 4. ถ้ามีจุดเปลี่ยน ให้ครอปและส่ง
                 if w > 0 and h > 0:
                     crop_img = frame_resized[y:y+h, x:x+w]
                     crop_bgr = cv2.cvtColor(crop_img, cv2.COLOR_BGRA2BGR)
                     
-                    # บีบอัด JPEG
                     encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
                     ret, jpeg = cv2.imencode('.jpg', crop_bgr, encode_param)
                     
@@ -166,7 +172,6 @@ async def handle_client(websocket):
             traceback.print_exc()
             raise
 
-    # รันทั้ง 2 งาน (รับทัช และ ส่งภาพ) พร้อมกัน
     try:
         await asyncio.gather(
             receive_touch(),

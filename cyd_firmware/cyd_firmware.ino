@@ -43,6 +43,8 @@ void webSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
     switch (type) {
         case WStype_CONNECTED:
             Serial.println("[WS] Connected to Server!");
+            tft.fillScreen(TFT_BLACK);
+            webSocket.sendTXT("REFRESH");
             break;
             
         case WStype_DISCONNECTED:
